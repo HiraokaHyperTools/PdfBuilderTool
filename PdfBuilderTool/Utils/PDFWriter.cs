@@ -1,4 +1,4 @@
-﻿using PdfBuilderTool.Interfaces;
+using PdfBuilderTool.Interfaces;
 using PdfBuilderTool.Models;
 using iTextSharp.text;
 using iTextSharp.text.pdf;
@@ -12,10 +12,11 @@ namespace PdfBuilderTool.Utils
 {
     public class PDFWriter : IDisposable
     {
-        Document document;
-        PdfCopy copy;
-        Stream fs;
-        List<PdfReader> includedReaders = new List<PdfReader>();
+        private Document document;
+        private PdfCopy copy;
+        private Stream fs;
+        private readonly bool leaveOpen = false;
+        private readonly List<PdfReader> includedReaders = new List<PdfReader>();
 
         public PDFWriter(String fppdf)
         {
@@ -27,6 +28,23 @@ namespace PdfBuilderTool.Utils
             this.fs = writeTo;
         }
 
+        public PDFWriter(Stream writeTo, bool leaveOpen)
+        {
+            this.fs = writeTo;
+            this.leaveOpen = leaveOpen;
+        }
+
+        public void AddAllPagesFrom(params IPageReader2[] readers)
+        {
+            foreach (var reader in readers)
+            {
+                AddRanges(
+                    reader,
+                    new Range[] { new Range { first = 1, last = reader.NumberOfPages, } }
+                );
+            }
+        }
+
         public void AddRanges(IPageReader2 reader, IEnumerable<Range> ranges)
         {
             var addPDF = reader as PDFPageReader;
@@ -36,10 +54,13 @@ namespace PdfBuilderTool.Utils
             {
                 for (int y = range.first; y <= range.last && y <= reader.NumberOfPages; y++)
                 {
+                    var firstPage = document == null;
+
                     if (document == null)
                     {
                         document = new Document(reader.GetPageSizeWithRotation(y));
                         copy = new PdfCopy(document, fs);
+                        copy.CloseStream = !leaveOpen;
                         document.Open();
                     }
 
@@ -51,6 +72,15 @@ namespace PdfBuilderTool.Utils
                         pageDict.Put(PdfName.ROTATE, new PdfNumber((rot + range.rotAngle) % 360));
                         PdfImportedPage page = copy.GetImportedPage(addPDF.reader, y);
                         copy.AddPage(page);
+
+                        if (firstPage)
+                        {
+                            document.AddTitle("" + addPDF.reader.Info["Title"]);
+                            document.AddSubject("" + addPDF.reader.Info["Subject"]);
+                            document.AddKeywords("" + addPDF.reader.Info["Keywords"]);
+                            document.AddAuthor("" + addPDF.reader.Info["Author"]);
+                            document.AddCreator("" + addPDF.reader.Info["Creator"]);
+                        }
                     }
                     else if (addImage != null)
                     {
@@ -94,9 +124,20 @@ namespace PdfBuilderTool.Utils
 
         public void Dispose()
         {
-            if (copy != null) copy.Close();
-            if (document != null) document.Close();
-            if (fs != null) fs.Close();
+            if (copy != null)
+            {
+                copy.Close();
+            }
+
+            if (document != null)
+            {
+                document.Close();
+            }
+
+            if (fs != null && !leaveOpen)
+            {
+                fs.Close();
+            }
         }
     }
 }
